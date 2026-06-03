@@ -25,7 +25,7 @@ local function performRequest(url, method, body)
 end
 
 -- Config & Themes
-local SERVER_URL      = "https://server-1-tw21.onrender.com/"
+local SERVER_URL      = "https://server-1-tw21.onrender.com"
 local PUBLISH_URL     = SERVER_URL .. "/send"
 local HISTORY_URL     = SERVER_URL .. "/history?serverId=" .. game.JobId
 local HEARTBEAT_URL   = SERVER_URL .. "/heartbeat"
