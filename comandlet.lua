@@ -166,12 +166,12 @@ local myToken = tostring(os.clock())
 _G.ChitChatToken = myToken
 local function isAlive() return _G.ChitChatToken == myToken end
 
-if LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("Comandlet") then
+if LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("RobloxRenderChat") then
     LocalPlayer.PlayerGui.RobloxRenderChat:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Comandlet"
+ScreenGui.Name = "RobloxRenderChat"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 ScreenGui.DisplayOrder = 999
