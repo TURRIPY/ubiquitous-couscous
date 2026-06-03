@@ -25,16 +25,21 @@ local function performRequest(url, method, body)
 end
 
 -- Config & Themes
-local SERVER_URL      = "https://server-1-tw21.onrender.com"
-local PUBLISH_URL     = SERVER_URL .. "/send"
-local HISTORY_URL     = SERVER_URL .. "/history?serverId=" .. game.JobId
-local HEARTBEAT_URL   = SERVER_URL .. "/heartbeat"
-local ONLINE_URL      = SERVER_URL .. "/online?serverId="  .. game.JobId
-local STATUS_URL      = SERVER_URL .. "/status?serverId="  .. game.JobId
+local SERVER_URL    = "https://server-1-tw21.onrender.com"
+local WS_URL        = "wss://server-1-tw21.onrender.com"
+local ONLINE_URL    = SERVER_URL .. "/online?serverId="  .. game.JobId
+local STATUS_URL    = SERVER_URL .. "/status?serverId="  .. game.JobId
+
+local function urlEncode(str)
+    return str:gsub("[^%w%-_%.~]", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+end
 
 local seenMessages    = {}
 local userColors      = {}
 local currentNickname = LocalPlayer.Name
+local wsConnection    = nil  -- WebSocket instance, set after connect
 
 -- Theme persistence
 local SETTINGS_FILE = "chitchat_settings.json"
@@ -56,6 +61,7 @@ local savedThemeName = (readfile and writefile) and loadSavedTheme() or "dark"
 local lastSendTime = 0
 local SEND_COOLDOWN = 1.0
 
+-- Add oneshot theme with background image
 local Themes = {
     dark = {
         MainBg       = Color3.fromRGB(20,  20,  24),
@@ -67,6 +73,7 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(60,  25,  25),
         ScrollBar    = Color3.fromRGB(80,  80,  90),
         IdText       = Color3.fromRGB(100, 100, 110),
+        BgImage      = nil,
     },
     aqua = {
         MainBg       = Color3.fromRGB(15,  28,  33),
@@ -78,6 +85,7 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(50,  20,  20),
         ScrollBar    = Color3.fromRGB(0,   100, 110),
         IdText       = Color3.fromRGB(60,  140, 145),
+        BgImage      = nil,
     },
     sakura = {
         MainBg       = Color3.fromRGB(28,  20,  24),
@@ -89,6 +97,7 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(65,  22,  30),
         ScrollBar    = Color3.fromRGB(140, 60,  90),
         IdText       = Color3.fromRGB(160, 90,  120),
+        BgImage      = nil,
     },
     green = {
         MainBg       = Color3.fromRGB(15,  24,  18),
@@ -100,6 +109,7 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(55,  20,  20),
         ScrollBar    = Color3.fromRGB(40,  110, 60),
         IdText       = Color3.fromRGB(70,  140, 85),
+        BgImage      = nil,
     },
     midnight = {
         MainBg       = Color3.fromRGB(10,  10,  20),
@@ -111,6 +121,7 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(60,  20,  30),
         ScrollBar    = Color3.fromRGB(70,  50,  150),
         IdText       = Color3.fromRGB(100, 85,  180),
+        BgImage      = nil,
     },
     sunset = {
         MainBg       = Color3.fromRGB(28,  18,  14),
@@ -122,6 +133,7 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(65,  18,  18),
         ScrollBar    = Color3.fromRGB(160, 70,  30),
         IdText       = Color3.fromRGB(180, 110, 60),
+        BgImage      = nil,
     },
     slate = {
         MainBg       = Color3.fromRGB(22,  26,  30),
@@ -133,22 +145,76 @@ local Themes = {
         ErrorBubble  = Color3.fromRGB(60,  22,  22),
         ScrollBar    = Color3.fromRGB(70,  100, 130),
         IdText       = Color3.fromRGB(100, 130, 155),
+        BgImage      = nil,
+    },
+    oneshot = {
+        MainBg       = Color3.fromRGB(25,  18,  35),
+        MyBubble     = Color3.fromRGB(140, 80,  200),
+        OtherBubble  = Color3.fromRGB(45,  30,  60),
+        TextBg       = Color3.fromRGB(35,  24,  50),
+        HintBg       = Color3.fromRGB(28,  18,  40),
+        SystemBubble = Color3.fromRGB(40,  28,  55),
+        ErrorBubble  = Color3.fromRGB(65,  20,  30),
+        ScrollBar    = Color3.fromRGB(140, 80,  200),
+        IdText       = Color3.fromRGB(200, 160, 255),
+        BgImage      = "rbxassetid://17258278537",
+    },
+    oneshot1 = {
+        MainBg       = Color3.fromRGB(30,  15,  22),
+        MyBubble     = Color3.fromRGB(200, 60,  100),
+        OtherBubble  = Color3.fromRGB(55,  25,  38),
+        TextBg       = Color3.fromRGB(42,  20,  30),
+        HintBg       = Color3.fromRGB(32,  14,  22),
+        SystemBubble = Color3.fromRGB(48,  22,  34),
+        ErrorBubble  = Color3.fromRGB(70,  18,  28),
+        ScrollBar    = Color3.fromRGB(200, 60,  100),
+        IdText       = Color3.fromRGB(255, 160, 200),
+        BgImage      = "rbxassetid://14535093049",
+    },
+    spongebob = {
+        MainBg       = Color3.fromRGB(18,  35,  55),
+        MyBubble     = Color3.fromRGB(220, 180, 20),
+        OtherBubble  = Color3.fromRGB(30,  60,  90),
+        TextBg       = Color3.fromRGB(25,  50,  75),
+        HintBg       = Color3.fromRGB(18,  38,  58),
+        SystemBubble = Color3.fromRGB(28,  55,  80),
+        ErrorBubble  = Color3.fromRGB(65,  18,  18),
+        ScrollBar    = Color3.fromRGB(220, 180, 20),
+        IdText       = Color3.fromRGB(255, 220, 80),
+        BgImage      = "rbxassetid://15219917785",
+    },
+    ayasemomo = {
+        MainBg       = Color3.fromRGB(12,  28,  30),
+        MyBubble     = Color3.fromRGB(40,  160, 155),
+        OtherBubble  = Color3.fromRGB(20,  48,  50),
+        TextBg       = Color3.fromRGB(18,  40,  42),
+        HintBg       = Color3.fromRGB(14,  30,  32),
+        SystemBubble = Color3.fromRGB(20,  44,  46),
+        ErrorBubble  = Color3.fromRGB(55,  18,  22),
+        ScrollBar    = Color3.fromRGB(40,  160, 155),
+        IdText       = Color3.fromRGB(120, 220, 215),
+        BgImage      = "rbxassetid://128495422073249",
     },
 }
 local activeTheme = Themes[savedThemeName] or Themes.dark
 
 local CommandHints = {
-    { cmd = "/clear",           desc = "Clear local chat",                        fill = "/clear" },
-    { cmd = "/nick ",           desc = "Change nickname (/nick reset to revert)", fill = "/nick " },
-    { cmd = "/online",          desc = "Show online users in chat",               fill = "/online" },
-    { cmd = "/status",          desc = "Server statistics",                       fill = "/status" },
-    { cmd = "/theme dark",      desc = "Dark theme",                              fill = "/theme dark" },
-    { cmd = "/theme aqua",      desc = "Aqua theme",                              fill = "/theme aqua" },
-    { cmd = "/theme sakura",    desc = "Sakura theme",                            fill = "/theme sakura" },
-    { cmd = "/theme green",     desc = "Green theme",                             fill = "/theme green" },
-    { cmd = "/theme midnight",  desc = "Midnight theme",                          fill = "/theme midnight" },
-    { cmd = "/theme sunset",    desc = "Sunset theme",                            fill = "/theme sunset" },
-    { cmd = "/theme slate",     desc = "Slate theme",                             fill = "/theme slate" },
+    { cmd = "/clear",            desc = "Clear local chat",                        fill = "/clear" },
+    { cmd = "/nick ",            desc = "Change nickname (/nick reset to revert)", fill = "/nick " },
+    { cmd = "/online",           desc = "Show online users in chat",               fill = "/online" },
+    { cmd = "/status",           desc = "Server statistics",                       fill = "/status" },
+    { cmd = "/theme",            desc = "Switch theme (type /theme to see list)",  fill = "/theme " },
+    { cmd = "/theme dark",       desc = "Dark theme",                              fill = "/theme dark" },
+    { cmd = "/theme aqua",       desc = "Aqua theme",                              fill = "/theme aqua" },
+    { cmd = "/theme sakura",     desc = "Sakura theme",                            fill = "/theme sakura" },
+    { cmd = "/theme green",      desc = "Green theme",                             fill = "/theme green" },
+    { cmd = "/theme midnight",   desc = "Midnight theme",                          fill = "/theme midnight" },
+    { cmd = "/theme sunset",     desc = "Sunset theme",                            fill = "/theme sunset" },
+    { cmd = "/theme slate",      desc = "Slate theme",                             fill = "/theme slate" },
+    { cmd = "/theme oneshot",    desc = "Oneshot theme",                           fill = "/theme oneshot" },
+    { cmd = "/theme oneshot1",   desc = "Oneshot 1 theme",                         fill = "/theme oneshot1" },
+    { cmd = "/theme spongebob",  desc = "Spongebob theme",                         fill = "/theme spongebob" },
+    { cmd = "/theme ayasemomo",  desc = "Ayase Momo theme",                        fill = "/theme ayasemomo" },
 }
 
 local function getNameColor(username)
@@ -190,6 +256,29 @@ MainFrame.Parent = ScreenGui
 local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 12)
 MainCorner.Parent = MainFrame
+
+-- Background image (used by themed skins like oneshot)
+local BgImage = Instance.new("ImageLabel")
+BgImage.Name = "BgImage"
+BgImage.Size = UDim2.new(1, 0, 1, 0)
+BgImage.Position = UDim2.new(0, 0, 0, 0)
+BgImage.BackgroundTransparency = 1
+BgImage.Image = ""
+BgImage.ImageTransparency = 0.35
+BgImage.ScaleType = Enum.ScaleType.Crop
+BgImage.ZIndex = 0
+BgImage.Visible = false
+BgImage.Parent = MainFrame
+
+local BgCorner = Instance.new("UICorner")
+BgCorner.CornerRadius = UDim.new(0, 12)
+BgCorner.Parent = BgImage
+
+-- Apply background image immediately if saved theme has one
+if activeTheme.BgImage then
+    BgImage.Image = activeTheme.BgImage
+    BgImage.Visible = true
+end
 
 -- Server ID + Ping
 local IdLabel = Instance.new("TextLabel")
@@ -263,7 +352,7 @@ TBCorner.Parent = TextBox
 -- Command hints panel
 local HintFrame = Instance.new("ScrollingFrame")
 HintFrame.Size = UDim2.new(1, -20, 0, 0)
-HintFrame.Position = UDim2.new(0, 10, 1, -50)
+HintFrame.Position = UDim2.new(0, 10, 1, -45)  -- bottom edge aligns with top of TextBox
 HintFrame.AnchorPoint = Vector2.new(0, 1)
 HintFrame.BackgroundColor3 = activeTheme.HintBg
 HintFrame.BackgroundTransparency = 0.1
@@ -450,6 +539,9 @@ local function setFaded(fade)
         TweenService:Create(IdLabel,   t, {TextTransparency = 1}):Play()
         TweenService:Create(PingLabel, t, {TextTransparency = 1}):Play()
         TweenService:Create(ChatLog,   t, {ScrollBarImageTransparency = 1}):Play()
+        if BgImage.Visible then
+            TweenService:Create(BgImage, t, {ImageTransparency = 0.85}):Play()
+        end
         for _, row in ipairs(ChatLog:GetChildren()) do
             if row:IsA("Frame") then
                 for _, bubble in ipairs(row:GetChildren()) do
@@ -467,6 +559,9 @@ local function setFaded(fade)
         TweenService:Create(IdLabel,   t, {TextTransparency = 0}):Play()
         TweenService:Create(PingLabel, t, {TextTransparency = 0}):Play()
         TweenService:Create(ChatLog,   t, {ScrollBarImageTransparency = 0}):Play()
+        if BgImage.Visible then
+            TweenService:Create(BgImage, t, {ImageTransparency = 0.35}):Play()
+        end
         for _, row in ipairs(ChatLog:GetChildren()) do
             if row:IsA("Frame") then
                 for _, bubble in ipairs(row:GetChildren()) do
@@ -634,9 +729,16 @@ local function updateCommandHints(text)
     local addedCount = 0
 
     for _, item in ipairs(CommandHints) do
-        local match = cleanText == "/"
-            or item.cmd:sub(1, #cleanText) == cleanText
-            or (cleanText:sub(1, 6) == "/theme" and item.cmd:sub(1, 6) == "/theme")
+        local match = false
+        if cleanText == "/" then
+            -- show only top-level commands (no sub-variants)
+            match = not item.cmd:find(" ", 2, true) or item.cmd == "/theme"
+        elseif cleanText:sub(1, 7) == "/theme " then
+            -- typing /theme <name> — show only theme variants, hide generic /theme
+            match = item.cmd:sub(1, 7) == "/theme " and item.cmd:sub(1, #cleanText) == cleanText
+        else
+            match = item.cmd:sub(1, #cleanText) == cleanText
+        end
 
         if match then
             addedCount = addedCount + 1
@@ -695,6 +797,15 @@ local function applyTheme(theme, themeName)
     TweenService:Create(IdLabel,    t, {TextColor3 = activeTheme.IdText}):Play()
     TweenService:Create(PingLabel,  t, {TextColor3 = activeTheme.IdText}):Play()
     ChatLog.ScrollBarImageColor3 = activeTheme.ScrollBar
+
+    -- Background image
+    if activeTheme.BgImage then
+        BgImage.Image = activeTheme.BgImage
+        BgImage.Visible = true
+    else
+        BgImage.Visible = false
+        BgImage.Image = ""
+    end
     for _, row in ipairs(ChatLog:GetChildren()) do
         if row:IsA("Frame") then
             local myB    = row:FindFirstChild("MyOwnBubble")
@@ -739,7 +850,7 @@ TextBox.FocusLost:Connect(function(enterPressed)
         if Themes[themeName] then
             applyTheme(Themes[themeName], themeName)
         else
-            appendMessage("SYSTEM", "Theme not found. Available: dark, aqua, sakura, green, midnight, sunset, slate", true)
+            appendMessage("SYSTEM", "Theme not found. Available: dark, aqua, sakura, green, midnight, sunset, slate, oneshot, oneshot1, spongebob, ayasemomo", true)
         end
         return
     end
@@ -795,67 +906,80 @@ TextBox.FocusLost:Connect(function(enterPressed)
     end
     lastSendTime = now
 
-    local payload = { user = currentNickname, msg = currentText, serverId = game.JobId }
-    coroutine.wrap(function()
-        local jsonPayload = HttpService:JSONEncode(payload)
-        local success, _ = performRequest(PUBLISH_URL, "POST", jsonPayload)
-        if not success then
-            appendMessage("SYSTEM", "Failed to send message", true)
+    if wsConnection then
+        local ok2 = pcall(function()
+            wsConnection:Send(HttpService:JSONEncode({ type = "msg", text = currentText }))
+        end)
+        if not ok2 then
+            appendMessage("SYSTEM", "Failed to send message.", true)
         end
-    end)()
+    else
+        appendMessage("SYSTEM", "Not connected to server.", true)
+    end
 end)
 
--- Receive loop
+-- WebSocket connection
 coroutine.wrap(function()
     appendMessage("SYSTEM", "Connecting to chat...")
-    local connected       = false
-    local suppressBubbles = true
 
     while isAlive() do
-        local success, responseText = performRequest(HISTORY_URL, "GET", nil)
-        if success then
-            if not connected then
-                connected = true
-                appendMessage("SYSTEM", "Connected! Use \x27/\x27 for commands.")
-                suppressBubbles = true  -- suppress bubbles on each (re)connect
-            end
+        local wsUrl = WS_URL .. "/?serverId=" .. urlEncode(game.JobId) .. "&user=" .. urlEncode(currentNickname)
+        local suppressBubbles = true
 
-            if responseText and responseText ~= "" then
-                local ok2, historyData = pcall(function() return HttpService:JSONDecode(responseText) end)
-                if ok2 and type(historyData) == "table" then
-                    for _, item in ipairs(historyData) do
+        local ok, ws = pcall(function()
+            return (syn and syn.websocket and syn.websocket.connect or WebSocket.connect)(wsUrl)
+        end)
+
+        if not ok or not ws then
+            appendMessage("SYSTEM", "Connection failed. Retrying...", true)
+            task.wait(4)
+        else
+            wsConnection = ws
+            appendMessage("SYSTEM", "Connected! Use '/' for commands.")
+
+            ws.OnMessage:Connect(function(raw)
+                local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
+                if not ok2 or not data then return end
+
+                if data.type == "history" and type(data.data) == "table" then
+                    for _, item in ipairs(data.data) do
                         if item.id and item.user and item.msg then
                             if not seenMessages[item.id] then
                                 seenMessages[item.id] = true
                                 appendMessage(item.user, item.msg)
-                                if not suppressBubbles then
-                                    showSpeechBubble(item.user, item.msg)
-                                end
                             end
                         end
                     end
                     suppressBubbles = false
+
+                elseif data.type == "msg" and data.data then
+                    local item = data.data
+                    if item.id and item.user and item.msg then
+                        if not seenMessages[item.id] then
+                            seenMessages[item.id] = true
+                            appendMessage(item.user, item.msg)
+                            if not suppressBubbles then
+                                showSpeechBubble(item.user, item.msg)
+                            end
+                        end
+                    end
                 end
-            end
-            task.wait(0.5)
-        else
-            if not connected then
-                task.wait(4)
-            else
-                connected = false
-                appendMessage("SYSTEM", "Connection lost. Reconnecting...", true)
-                task.wait(2)
+            end)
+
+            ws.OnClose:Connect(function()
+                wsConnection = nil
+                if isAlive() then
+                    appendMessage("SYSTEM", "Connection lost. Reconnecting...", true)
+                end
+            end)
+
+            -- Keep alive while connected
+            while isAlive() and wsConnection do
+                task.wait(1)
             end
         end
-    end
-end)()
 
--- Heartbeat
-coroutine.wrap(function()
-    while isAlive() do
-        local payload = HttpService:JSONEncode({ user = currentNickname, serverId = game.JobId })
-        performRequest(HEARTBEAT_URL, "POST", payload)
-        task.wait(8)
+        if isAlive() then task.wait(3) end
     end
 end)()
 
